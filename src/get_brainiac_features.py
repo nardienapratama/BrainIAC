@@ -7,7 +7,7 @@ import os
 import argparse
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from dataset import BrainAgeDataset, get_validation_transform
+from dataset import BrainImageDataset, get_validation_transform
 from load_brainiac import load_brainiac
 
 # fix random seed 
@@ -32,26 +32,45 @@ def infer(model, test_loader):
     
     with torch.no_grad():
         for sample in tqdm(test_loader, desc="Extracting ViT features", unit="batch"):
-            inputs = sample['image'].to(device)
-            class_labels = sample['label'].float().to(device)
-
-            # Get features from the ViT backbone model
-            features = model(inputs)
-            features_numpy = features.cpu().numpy()
-
-            # Expand features into separate columns
-            feature_columns = [f'Feature_{i}' for i in range(features_numpy.shape[1])]
-            batch_features = pd.DataFrame(
-                features_numpy,
-                columns=feature_columns
-            )
-            batch_features['GroundTruthClassLabel'] = class_labels.cpu().numpy().flatten()
-
-            # Append batch features to features_df
-            if features_df is None:
-                features_df = batch_features
+            if not sample:  # skip empty batches
+                continue
             else:
-                features_df = pd.concat([features_df, batch_features], ignore_index=True)
+                # process for all modalities
+                temp_df = None
+
+                inputs = torch.stack(sample['image']).to(device)
+                class_labels = torch.stack(sample['label']).float().to(device)
+
+                # Get features from the ViT backbone model
+                features = model(inputs)
+
+                features_numpy = features.cpu().numpy()
+
+                # Expand features into separate columns
+                feature_columns = [f'Feature_{i}' for i in range(features_numpy.shape[1])]
+                batch_features = pd.DataFrame(
+                    features_numpy,
+                    columns=feature_columns
+                )
+
+                # Add metadata columns (ensure correct length)
+                # If batch size is 1, these will be lists of length 1
+                for meta_key in ['pat_id', 'modality', 'collection']:
+                    batch_features[meta_key] = sample[meta_key]
+
+                # Add label column (flatten to 1D)
+                batch_features['GroundTruthClassLabel'] = class_labels.cpu().numpy().flatten()
+
+                # Append batch features to temp_df
+                if temp_df is None:
+                    temp_df = batch_features
+                else:
+                    temp_df = pd.concat([temp_df, batch_features], ignore_index=True)
+                # After processing all modalities for the current sample, append temp_df to features_df
+                if features_df is None:
+                    features_df = temp_df
+                else:
+                    features_df = pd.concat([features_df, temp_df], ignore_index=True)
     
     return features_df
 
@@ -77,18 +96,35 @@ def main():
     args = parser.parse_args()
 
     # Setup dataset with validation transforms (no augmentation for feature extraction)
-    test_dataset = BrainAgeDataset(
+    # test_dataset = BrainAgeDataset(
+    #     csv_path=args.input_csv,
+    #     root_dir=args.root_dir,
+    #     transform=get_validation_transform()
+    # )
+    
+    test_dataset = BrainImageDataset(
         csv_path=args.input_csv,
         root_dir=args.root_dir,
         transform=get_validation_transform()
     )
-    
+
+    if len(test_dataset) == 0:
+        print(f"Skipping {args.root_dir} (patient not in CSV)")
+        return
+
+    def collate_remove_none(batch):
+        batch = [b for b in batch if b is not None]
+        if len(batch) == 0:
+            return None
+        return {k:  [d[k] for d in batch] for k in batch[0].keys()}
+
     test_loader = DataLoader(
         test_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=True,
+        collate_fn=collate_remove_none
     )
 
     # Load ViT BrainIAC - device placement is handled in load_brainiac
