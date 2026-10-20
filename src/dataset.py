@@ -367,33 +367,37 @@ class QuadImageDataset(Dataset):
 class QuadImageMGMTDataset(QuadImageDataset):
     def __init__(self, csv_path, root_dir, transform=None):
         super().__init__(csv_path, root_dir, transform)
-        self.dataframe = pd.read_csv(csv_path, dtype={"collection": str, "pat_id": str, "modality":str, "label": float})
+        # root dir should be brats2021 training set directory
+        self.dataframe = pd.read_csv(csv_path, dtype={"collection": str, "pat_id": str, "modality":str, "label": float, "image_path":str})
 
     def __getitem__(self, idx):
         pat_id = str(self.dataframe.loc[idx, 'pat_id'])
         label = self.dataframe.loc[idx, 'label']
-        #dataset = str(self.dataframe.loc[idx, 'dataset'])
+        modality = str(self.dataframe.loc[idx, 'modality'])
+        current_img_path = self.dataframe.loc[idx, 'image_path']
         
         # Construct paths for all four image modalities
         # Common brain tumor sequences: T1, T1c, T2, FLAIR
-        img_path1 = os.path.join(self.root_dir,  pat_id + "_t1.nii.gz")
-        img_path2 = os.path.join(self.root_dir, pat_id + "_t1ce.nii.gz")
-        img_path3 = os.path.join(self.root_dir, pat_id + "_t2.nii.gz")
-        img_path4 = os.path.join(self.root_dir, pat_id + "_flair.nii.gz")
+        img_path1 = os.path.join(current_img_path,  pat_id + "_t1.nii.gz")
+        img_path2 = os.path.join(current_img_path, pat_id + "_t1ce.nii.gz")
+        img_path3 = os.path.join(current_img_path, pat_id + "_t2.nii.gz")
+        img_path4 = os.path.join(current_img_path, pat_id + "_flair.nii.gz")
 
     
-        sample = {"t1": img_path1, "t1ce": img_path2, "t2": img_path3, "flair": img_path4}
+        sample = {"image1": img_path1, "image2": img_path2, "image3": img_path3, "image4": img_path4}
         
         if self.transform:
             sample = self.transform(sample)
 
         # Return all four images, collate_fn will stack them for model input
         return {
-            "t1": sample["t1"], 
-            "t1ce": sample["t1ce"], 
-            "t2": sample["t2"], 
-            "flair": sample["flair"], 
-            "label": torch.tensor(label, dtype=torch.float)
+            "t1": sample["image1"], 
+            "t1ce": sample["image2"], 
+            "t2": sample["image3"], 
+            "flair": sample["image4"], 
+            "label": torch.tensor(label, dtype=torch.float),
+            "pat_id": pat_id,
+            "modality": modality
         } 
 
 #==============================================
