@@ -40,11 +40,13 @@ def infer(model, test_loader):
     # with torch.no_grad():
     with torch.inference_mode():
         mri_types = ['t1', 't1ce', 't2', 'flair']
+        print("Waiting for first batch...", flush=True)
 
         for sample in tqdm(test_loader, desc="Extracting ViT features", unit="batch"):
             if sample is None:
                 continue
             else:
+                print("Going through samples...")
                 # process for all modalities
 
                 # NEW VERSION - ALL PATIENTS DONE AT THE SAME TIME
@@ -78,7 +80,7 @@ def infer(model, test_loader):
                 # batch inputs shape: batch size, 4, channels, dept, height, width
                 batch_size, num_mri_mods, channels, depth, height, width = batch_inputs.shape
 
-                inputs = torch.reshape(batch_inputs, (batch_size * num_mri_mods,channels,depth,height,width)).to(device, non_blocking=True)
+                inputs = torch.reshape(batch_inputs, (batch_size * num_mri_mods,channels,depth,height,width))
                 
 
                 # Get features from the ViT backbone model
@@ -166,7 +168,7 @@ def main():
     #     root_dir=args.root_dir,
     #     transform=get_validation_transform()
     # )
-
+    print("Creating test dataset...")
     test_dataset = QuadImageMGMTDataset(
         csv_path=args.input_csv,
         root_dir=args.root_dir
@@ -182,6 +184,7 @@ def main():
             return None
         return {k:  [d[k] for d in batch] for k in batch[0].keys()}
 
+    print("Creating test dataloader...")
     test_loader = DataLoader(
         test_dataset,
         batch_size=args.batch_size,
@@ -198,6 +201,7 @@ def main():
     print(f"Model device: {next(model.parameters()).device}")
     
     # Extract features
+    print("Performing inference...")
     features_df = infer(model, test_loader)
     if features_df is None:
         print("No features were extracted.")
