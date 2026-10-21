@@ -368,12 +368,25 @@ class QuadImageMGMTDataset(QuadImageDataset):
     def __init__(self, csv_path, root_dir, transform=None):
         super().__init__(csv_path, root_dir, transform)
         # root dir should be brats2021 training set directory
-        self.dataframe = pd.read_csv(csv_path, dtype={"collection": str, "pat_id": str, "modality":str, "label": float, "image_path":str})
+        df = pd.read_csv(csv_path, dtype={"collection": str, "pat_id": str, "modality":str, "label": float, "image_path":str})
+        unique_paths_per_pat = df.groupby("pat_id")["image_path"].nunique() # check how many unique paths each patient has
+
+        if (unique_paths_per_pat > 1).any():
+            raise ValueError("Some patients have multiple image paths!")
+
+        unique_labels_per_pat = df.groupby("pat_id")["label"].nunique() # how many patients have more than one label (label not consistent)
+
+        if (unique_labels_per_pat > 1).any():
+            raise ValueError("Some patients have multiple labels!")
+        
+        self.dataframe = (
+            df.drop_duplicates(subset="pat_id")
+            .reset_index(drop=True)
+        )
 
     def __getitem__(self, idx):
         pat_id = str(self.dataframe.loc[idx, 'pat_id'])
         label = self.dataframe.loc[idx, 'label']
-        modality = str(self.dataframe.loc[idx, 'modality'])
         current_img_path = self.dataframe.loc[idx, 'image_path']
         
         # Construct paths for all four image modalities
@@ -397,7 +410,6 @@ class QuadImageMGMTDataset(QuadImageDataset):
             "flair": sample["image4"], 
             "label": torch.tensor(label, dtype=torch.float),
             "pat_id": pat_id,
-            "modality": modality
         } 
 
 #==============================================
