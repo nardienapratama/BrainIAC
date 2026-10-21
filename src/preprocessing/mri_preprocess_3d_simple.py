@@ -28,7 +28,7 @@ def brain_extraction(input_dir, output_dir, device):
     print("\nContents of output directory after brain extraction:")
     print(os.listdir(output_dir))
 
-def registration(input_dir, output_dir, temp_img, interp_type='linear'):
+def registration(input_dir, output_dir, temp_img, valid_files,interp_type='linear'):
     """
     MRI registration with SimpleITK
     Args:
@@ -38,7 +38,6 @@ def registration(input_dir, output_dir, temp_img, interp_type='linear'):
     Returns:
         The sitk image object -- nii.gz
     """
-    
     # Read the template image
     fixed_img = sitk.ReadImage(temp_img, sitk.sitkFloat32)
     
@@ -47,6 +46,9 @@ def registration(input_dir, output_dir, temp_img, interp_type='linear'):
     print("Preloading step...")
     for img_dir in tqdm(sorted(glob.glob(input_dir + '/*.nii.gz'))):
         ID = img_dir.split('/')[-1].split('.')[0]
+        if ID + '.nii.gz' not in valid_files:
+            print(f'Skipping {ID} as it does not meet modality/keyword criteria.')
+            continue
         try:
             moving_img = sitk.ReadImage(img_dir, sitk.sitkFloat32)
         except Exception as e:
@@ -59,6 +61,9 @@ def registration(input_dir, output_dir, temp_img, interp_type='linear'):
     
     for img_dir in tqdm(list_of_files):
         ID = img_dir.split('/')[-1].split('.')[0]
+        if ID + '.nii.gz' not in valid_files:
+            print(f'Skipping {ID} as it does not meet modality/keyword criteria.')
+            continue
         if ID in IDs:
             print(f'Skipping problematic file: {ID}')
             continue
@@ -154,16 +159,39 @@ def registration(input_dir, output_dir, temp_img, interp_type='linear'):
     print(os.listdir(output_dir))
     return count > 0
 
-def main(temp_img, input_dir, output_dir):
+def main(temp_img, input_dir, output_dir, include_modalities, exclude_keywords):
     """
     Main function to process brain MRI images
     Args:
         temp_img {str} -- Path to template image
         input_dir {str} -- Path to input directory containing images
         output_dir {str} -- Path to output directory for results
+        include_modalities {str} -- Comma-separated list of MRI modalities to include
+        exclude_keywords {str} -- Comma-separated list of substrings to exclude from filenames
     """
    
     os.makedirs(output_dir, exist_ok=True)
+
+    # Convert args into list
+    include_modalities = include_modalities.lower().split(",")
+    exclude_keywords = exclude_keywords.lower().split(",")
+    
+    valid_files = []
+    # Filter files by checking if their names contain include_modalities and exclude exclude_keywords
+    for curr_file in os.listdir(input_dir):
+        curr_filename = curr_file.lower()
+        if not curr_filename.endswith('.nii.gz'):
+            continue
+
+        if any(kw in curr_filename for kw in exclude_keywords):
+            # exclude file if it doesn't contain the required modality
+            print(f"Excluded {curr_file} as it contains exclude keyword(s): {exclude_keywords}")
+            continue
+        if not any(modality in curr_filename for modality in include_modalities):
+            # exclude file if it contains any of the exclude keywords
+            print(f"Excluded {curr_file} as it does not contain any required modality :{include_modalities}")
+            continue
+        valid_files.append(curr_file)
     
     # set device
     device = "0" if torch.cuda.is_available() else "cpu"
@@ -179,7 +207,8 @@ def main(temp_img, input_dir, output_dir):
     success = registration(
         input_dir=input_dir,
         output_dir=temp_reg_dir,
-        temp_img=temp_img
+        temp_img=temp_img,
+        valid_files=valid_files,
     )
     
     if not success:
@@ -210,6 +239,17 @@ if __name__ == '__main__':
     parser.add_argument("--temp_img", type=str, required=True, help="Path to the atlas template image.")
     parser.add_argument("--input_dir", type=str, required=True, help="Path to the input images directory.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the processed images.")
-
+    parser.add_argument(
+        "--include_modalities",
+        type=str,
+        default="t1c,t1ce,t2",
+        help="Comma-separated list of MRI modalities to include (e.g., t1c,t2)"
+    )
+    parser.add_argument(
+        "--exclude_keywords",
+        type=str,
+        help="Comma-separated list of substrings to exclude from filenames (e.g., bias)"
+    )
     args = parser.parse_args()
-    main(temp_img=args.temp_img, input_dir=args.input_dir, output_dir=args.output_dir) 
+    main(temp_img=args.temp_img, input_dir=args.input_dir, output_dir=args.output_dir,
+         include_modalities=args.include_modalities, exclude_keywords=args.exclude_keywords) 

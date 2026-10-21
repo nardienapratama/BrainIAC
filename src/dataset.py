@@ -65,6 +65,66 @@ class BrainAgeDataset(Dataset):
         return {"image": sample["image"], "label": torch.tensor(label, dtype=torch.float32)}
 
 
+class BrainImageDataset(Dataset):
+    def __init__(self, csv_path, root_dir, transform=None):
+        self.root_dir = root_dir
+        # check if root dir contains folder for each image id, if so, we will extract the image id
+        self.dataframe = pd.read_csv(csv_path, dtype={"collection": str, "pat_id": str, "modality":str, "label": float})
+        print(self.root_dir.split("/")[-1])
+        print(self.dataframe['pat_id'].values)
+        print("is value there: ", self.root_dir.split("/")[-1] in self.dataframe['pat_id'].values)
+        current_patient_id = self.root_dir.split("/")[-1]
+        if current_patient_id in self.dataframe['pat_id'].values:
+            self.dataframe = self.dataframe[self.dataframe["pat_id"] == current_patient_id].reset_index(drop=True)
+        else:
+            self.dataframe = self.dataframe.iloc[0:0]
+        self.transform = transform if transform is not None else get_default_transform()
+
+    def __len__(self):
+        return len(self.dataframe)
+
+    def __getitem__(self, idx):
+        # retrieve all modality file paths for current image id if self.current_patient_id is set, otherwise retrieve single modality file path as before
+        # if hasattr(self, 'current_patient_id'):
+        #     pat_id = self.current_patient_id
+        #     #retrieve collection and modality for current patient id from dataframe
+        #     collection = str(self.dataframe[self.dataframe['pat_id'] == pat_id]['collection'].values[0])
+        #     modality = str(self.dataframe[self.dataframe['pat_id'] == pat_id]['modality'].values[0])
+        #     label = float(self.dataframe[self.dataframe['pat_id'] == pat_id]['label'].values[0])
+        #     results = []
+        #     for mod in modality:
+        #         # Construct image path for current patient id, collection, and modality
+        #         img_path = os.path.join(self.root_dir, pat_id + "_" + mod + "_0000" + ".nii.gz")
+        #         sample = {"image": img_path}
+        #         sample = self.transform(sample)
+        #         result = {"image": sample["image"],
+        #         "collection": collection,
+        #         "pat_id": pat_id,
+        #         "modality": modality,
+        #         "label": torch.tensor(label, dtype=torch.float32)}
+        #         results.append(result)
+
+        # else:
+        pat_id = str(self.dataframe.loc[idx, 'pat_id'])
+
+        collection = str(self.dataframe.loc[idx, 'collection'])
+        modality = str(self.dataframe.loc[idx, 'modality'])  # modality label (e.g. t1ce, t2, etc.)
+        label = float(self.dataframe.loc[idx, 'label'])
+    
+        img_path = os.path.join(self.root_dir,  pat_id  + "_" + modality + ".nii.gz")
+        print("Getting image from:", img_path, ".......................")
+        if not os.path.exists(img_path):
+            return None  # Return empty list if image file does not exist
+        sample = {"image": img_path}
+        sample = self.transform(sample)
+        results = {"image": torch.tensor(sample["image"], dtype=torch.float32),
+                "collection": collection,
+                "pat_id": pat_id,
+                "modality": modality,
+                "label": torch.tensor(label, dtype=torch.float32)}
+        return results
+
+
 class MCIStrokeDataset(Dataset):
     """Dataset class for MCI and Stroke tasks"""
     def __init__(self, csv_path, root_dir, transform=None):
@@ -300,7 +360,57 @@ class QuadImageDataset(Dataset):
             "image4": sample["image4"], 
             "label": torch.tensor(label, dtype=torch.float)
         } 
+
+#==============================================
+## DATASET CLASS FOR QUAD IMAGE MGMT MODEL 
+#==============================================
+class QuadImageMGMTDataset(QuadImageDataset):
+    def __init__(self, csv_path, root_dir, transform=None):
+        super().__init__(csv_path, root_dir, transform)
+        # root dir should be brats2021 training set directory
+        df = pd.read_csv(csv_path, dtype={"collection": str, "pat_id": str, "modality":str, "label": float, "image_path":str})
+        unique_paths_per_pat = df.groupby("pat_id")["image_path"].nunique() # check how many unique paths each patient has
+
+        if (unique_paths_per_pat > 1).any():
+            raise ValueError("Some patients have multiple image paths!")
+
+        unique_labels_per_pat = df.groupby("pat_id")["label"].nunique() # how many patients have more than one label (label not consistent)
+
+        if (unique_labels_per_pat > 1).any():
+            raise ValueError("Some patients have multiple labels!")
+        
+        self.dataframe = (
+            df.drop_duplicates(subset="pat_id")
+            .reset_index(drop=True)
+        )
+
+    def __getitem__(self, idx):
+        pat_id = str(self.dataframe.loc[idx, 'pat_id'])
+        label = self.dataframe.loc[idx, 'label']
+        current_img_path = self.dataframe.loc[idx, 'image_path']
+        
+        # Construct paths for all four image modalities
+        # Common brain tumor sequences: T1, T1c, T2, FLAIR
+        img_path1 = os.path.join(current_img_path,  pat_id + "_t1.nii.gz")
+        img_path2 = os.path.join(current_img_path, pat_id + "_t1ce.nii.gz")
+        img_path3 = os.path.join(current_img_path, pat_id + "_t2.nii.gz")
+        img_path4 = os.path.join(current_img_path, pat_id + "_flair.nii.gz")
+
     
+        sample = {"image1": img_path1, "image2": img_path2, "image3": img_path3, "image4": img_path4}
+        
+        if self.transform:
+            sample = self.transform(sample)
+
+        # Return all four images, collate_fn will stack them for model input
+        return {
+            "t1": sample["image1"], 
+            "t1ce": sample["image2"], 
+            "t2": sample["image3"], 
+            "flair": sample["image4"], 
+            "label": torch.tensor(label, dtype=torch.float),
+            "pat_id": pat_id,
+        } 
 
 #==============================================
 ## DATASET CLASS FOR SEGMENTATION MODEL FINETUNE
